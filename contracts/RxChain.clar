@@ -14,8 +14,12 @@
 (define-constant ERR-PATIENT-NOT-FOUND (err u107))
 (define-constant ERR-REFILL-LIMIT-EXCEEDED (err u108))
 (define-constant ERR-INVALID-INPUT (err u109))
+(define-constant ERR-INVALID-ALLERGY (err u110))
+(define-constant ERR-INVALID-EVENT (err u111))
 
 (define-data-var prescription-counter uint u0)
+(define-data-var allergy-counter uint u0)
+(define-data-var event-counter uint u0)
 
 (define-map doctors principal bool)
 (define-map pharmacies principal bool)
@@ -55,6 +59,27 @@
 )
 
 (define-map fill-counter uint uint)
+
+(define-map allergies uint
+  {
+    patient: principal,
+    allergen: (string-ascii 100),
+    severity: uint,
+    registered-at: uint
+  }
+)
+
+(define-map adverse-events uint
+  {
+    patient: principal,
+    pharmacy: principal,
+    prescription-id: uint,
+    medication: (string-ascii 100),
+    symptoms: (string-ascii 200),
+    severity: uint,
+    reported-at: uint
+  }
+)
 
 (define-public (register-doctor (doctor principal))
   (begin
@@ -189,6 +214,63 @@
   )
 )
 
+(define-public (register-patient-allergy (allergen (string-ascii 100)) (severity uint))
+  (let
+    (
+      (allergy-id (+ (var-get allergy-counter) u1))
+      (current-height stacks-block-height)
+    )
+    (asserts! (> (len allergen) u0) ERR-INVALID-ALLERGY)
+    (asserts! (<= severity u3) ERR-INVALID-ALLERGY)
+    (asserts! (is-some (map-get? patients tx-sender)) ERR-PATIENT-NOT-FOUND)
+    
+    (map-set allergies allergy-id
+      {
+        patient: tx-sender,
+        allergen: allergen,
+        severity: severity,
+        registered-at: current-height
+      }
+    )
+    (var-set allergy-counter allergy-id)
+    (ok allergy-id)
+  )
+)
+
+(define-public (report-adverse-event 
+  (patient principal)
+  (prescription-id uint)
+  (medication (string-ascii 100))
+  (symptoms (string-ascii 200))
+  (severity uint)
+)
+  (let
+    (
+      (event-id (+ (var-get event-counter) u1))
+      (current-height stacks-block-height)
+    )
+    (asserts! (default-to false (map-get? pharmacies tx-sender)) ERR-NOT-PHARMACY)
+    (asserts! (is-some (map-get? patients patient)) ERR-PATIENT-NOT-FOUND)
+    (asserts! (> (len medication) u0) ERR-INVALID-EVENT)
+    (asserts! (> (len symptoms) u0) ERR-INVALID-EVENT)
+    (asserts! (<= severity u3) ERR-INVALID-EVENT)
+    
+    (map-set adverse-events event-id
+      {
+        patient: patient,
+        pharmacy: tx-sender,
+        prescription-id: prescription-id,
+        medication: medication,
+        symptoms: symptoms,
+        severity: severity,
+        reported-at: current-height
+      }
+    )
+    (var-set event-counter event-id)
+    (ok event-id)
+  )
+)
+
 (define-read-only (get-prescription (prescription-id uint))
   (map-get? prescriptions prescription-id)
 )
@@ -301,4 +383,31 @@
       )
     false
   )
+)
+
+(define-read-only (get-allergy (allergy-id uint))
+  (map-get? allergies allergy-id)
+)
+
+(define-read-only (get-adverse-event (event-id uint))
+  (map-get? adverse-events event-id)
+)
+
+(define-read-only (has-patient-allergies (patient principal))
+  (> (var-get allergy-counter) u0)
+)
+
+(define-read-only (check-allergy-for-patient (allergy-id uint))
+  (match (map-get? allergies allergy-id)
+    allergy (is-eq (get patient allergy) tx-sender)
+    false
+  )
+)
+
+(define-read-only (get-patient-allergy-count)
+  (var-get allergy-counter)
+)
+
+(define-read-only (get-patient-event-count)
+  (var-get event-counter)
 )
